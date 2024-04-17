@@ -18,7 +18,7 @@ Simply run: `bash scripts/run_pretraining.sh $(source scripts/configs/pretrain_c
 
 This process will use 8 GPUs and thus 8 data parallel groups. To adjust the number of data parallel groups, a few manual steps are needed:
 1. In the file `scripts/configs/pretrain_config.sh`, under the `dgxa100-80g_8gpu_fp16` configuration, you'll need to adjust `num_gpus` to the number you want to train on. For now, it can only be in the set {1, 2, 4, 8}
-2. In run_pretraining.py, you'll need to copy-replace instances of `model_state_split_indices_8` and `optimizer_state_split_indices_8` to `model_state_split_indices_{num_gpus}` and `optimizer_state_split_indices_{num_gpus}`, where `num_gpus` is the value you set earlier. This is to ensure the model splitting is correct.
+2. In run_pretraining.py, you'll need to copy-replace instances of `model_state_split_indices_8` and `optimizer_state_split_indices_8` to `model_state_split_indices_{num_gpus}` and `optimizer_state_split_indices_{num_gpus}`, where `num_gpus` is the value you set earlier. Please also adjust the `NUM_GPUS` global variable in this file to the same value as `num_gpus` you set set earlier. This is to ensure the model splitting is correct.
 
 
 ## Persist CPU Checkpoint to Disk

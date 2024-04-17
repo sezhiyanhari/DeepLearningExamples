@@ -74,6 +74,8 @@ def signal_handler(sig, frame):
 
 signal.signal(signal.SIGTERM, signal_handler)
 
+NUM_GPUS = 8
+
 optimizer_state_split_indices_8 = [0, 16, 58, 99, 138, 182, 221, 266, 796]
 optimizer_state_split_indices_6 = [0, 29, 86, 137, 194, 245, 796]
 optimizer_state_split_indices_4 = [0, 57, 137, 220, 796]
@@ -556,8 +558,6 @@ def checkpoint_step(args, epoch, global_step, model, optimizer, grad_scaler, las
 def write_cpu_checkpoint_to_disk(args, buffer_states, grad_scaler, model_state_keys, optimizer_state_keys):
     print("Error detected, writing in-memory checkpoints to disk...")
 
-    start_time = time.time()
-
     if args.local_rank == 0:
         with open('results/checkpoints/memory/grad_scaler/grad_scaler.txt', 'w+') as grad_scaler_file: 
             grad_scaler_file.write(json.dumps(grad_scaler.state_dict()))
@@ -579,11 +579,27 @@ def write_cpu_checkpoint_to_disk(args, buffer_states, grad_scaler, model_state_k
     #     torch.save(buffer_states[buffer_state_key], f"results/checkpoints/memory/optimizer_state/{buffer_state_key}")
 
     # Faster way to store entire state to disk instead of individual files
-    torch.save(buffer_states, f"results/checkpoints/memory/buffer_states_{args.local_rank}.pt")    
+    # In this code, we're also writing the files sequentially instead of all at one time
+    if args.local_rank == 0:
+        print("Starting in-order disk persisting at time: ", time.time())
+        print("Persisting to disk for rank: ", args.local_rank)
+        torch.save(buffer_states, f"results/checkpoints/memory/buffer_states_{args.local_rank}.pt")
+        with open("results/checkpoints/memory/0_written.txt", "w") as fp:
+            pass
+    else:
+        while True:
+            if os.path.isfile(f"results/checkpoints/memory/{args.local_rank - 1}_written.txt"):
+                print(f"Persisting to disk for rank: ", args.local_rank)
+                torch.save(buffer_states, f"results/checkpoints/memory/buffer_states_{args.local_rank}.pt")                
+                with open(f"results/checkpoints/memory/{args.local_rank}_written.txt", "w") as fp:
+                    pass
+                break
+            time.sleep(0.01)
 
-    end_time = time.time()
+    print(f"Done writing checkpoints to disk for rank {args.local_rank}...")
 
-    print(f"Done writing checkpoints to disk, took {end_time - start_time} seconds...")
+    if args.local_rank == NUM_GPUS - 1:
+        print("Ending in-order disk persisting at time: ", time.time())
 
     exit(0)
 
@@ -601,7 +617,7 @@ def load_model_checkpoints_from_disk(model, model_state_keys):
 def load_model_checkpoints_from_disk_optimized(args, model, model_state_keys):
     print(f"Loading model state from latest checkpoint optimized {args.n_gpu}...")
     state_dict = {}
-    for local_rank in range(8):
+    for local_rank in range(NUM_GPUS):
         buffer_states = torch.load(f"results/checkpoints/memory/buffer_states_{local_rank}.pt")
         for k in model_state_keys[model_state_split_indices_8[local_rank]: model_state_split_indices_8[local_rank + 1]]:
             state_dict[k] = buffer_states[k]
@@ -640,7 +656,7 @@ def load_optimizer_checkpoints_from_disk_optimized(args, optimizer, optimizer_st
     print("Loading optimizer state from latest checkpoint optimized...")
     state_dict = {}
     state_dict['state'] = {}
-    for local_rank in range(8):
+    for local_rank in range(NUM_GPUS):
         buffer_states = torch.load(f"results/checkpoints/memory/buffer_states_{local_rank}.pt")
         for param_num, param_attr in optimizer_state_keys[optimizer_state_split_indices_8[local_rank]: optimizer_state_split_indices_8[local_rank + 1]]:
             if param_num not in state_dict['state']:
@@ -990,6 +1006,7 @@ if __name__ == "__main__":
     now = time.time()
     args, train_time_raw, stats, skip_fwd_bwd_for_perf = main()
     gpu_count = args.n_gpu
+    print("GPU count: ", gpu_count)
     if torch.distributed.is_initialized():
         gpu_count = get_world_size()
     if is_main_process():
