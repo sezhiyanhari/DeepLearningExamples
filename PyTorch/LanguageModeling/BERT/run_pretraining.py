@@ -690,10 +690,9 @@ def load_grad_scaler_checkpoints_from_disk(grad_scaler):
         print("Loaded grad_scaler: ", grad_scaler)
 
 
-def checkpoint_only_to_cpu_step(args, epoch, global_step, model, optimizer, grad_scaler, last3_checkpoint_paths, buffer_states, model_state_keys, optimizer_state_keys):
+def checkpoint_only_to_cpu_step(args, model, optimizer, buffer_states, model_state_keys, optimizer_state_keys):
     torch.cuda.synchronize(device=args.local_rank)
     start_checkpoint_time = time.time()
-    dllogger.log(step="PARAMETER", data={"checkpoint_step": global_step})
     model_to_save = model.module if hasattr(model,
                                             'module') else model  # Only save the model it-self
     if args.do_train:
@@ -728,10 +727,10 @@ def checkpoint_only_to_cpu_step(args, epoch, global_step, model, optimizer, grad
 
     torch.cuda.synchronize(device=args.local_rank)
     end_checkpoint_time = time.time()
-    print(f"Total time to checkpoint to CPU for rank {args.local_rank}: {end_checkpoint_time - start_checkpoint_time}")
+    # print(f"Total time to checkpoint to CPU for rank {args.local_rank}: {end_checkpoint_time - start_checkpoint_time}")
 
 
-def create_cpu_buffers_for_checkpointing(args, epoch, global_step, model, optimizer, grad_scaler, last3_checkpoint_paths, buffer_states, model_state_keys, optimizer_state_keys):
+def create_cpu_buffers_for_checkpointing(args, model, optimizer, buffer_states):
     print("Creating CPU buffers...")
     torch.cuda.synchronize(device=args.local_rank)
 
@@ -904,6 +903,7 @@ def main():
         skip_fwd_bwd_for_perf = 50
     start_global = None
     create_cpu_buffers = True
+    optimizer_initialized = False
     while True:
         for step, batch in enumerate(train_iter):
             if os.path.isfile("error.txt"):
@@ -934,18 +934,20 @@ def main():
                     take_training_step(args, grad_scaler, model, criterion, batch, stats)
 
                 take_optimizer_step(args, lr_scheduler, optimizer, grad_scaler, device, stats)
+                optimizer_initialized = True
+
+            if optimizer_initialized:
+                if create_cpu_buffers:
+                    create_cpu_buffers_for_checkpointing(args, model, optimizer, buffer_states)
+                    create_cpu_buffers = False
+                    
+                checkpoint_only_to_cpu_step(args, model, optimizer, buffer_states, model_state_keys, optimizer_state_keys)
 
             # Log Optimizer Step
             if (not grad_accumulation_step) or timeout_sent:
                 static_optimizer_step = stats.host_stat_value('model_step') // args.gradient_accumulation_steps
                 dynamic_optimizer_step = static_optimizer_step - int(stats.host_stat_value('skipped_optimizer_steps')) + global_resume_step
                 no_log_steps = static_optimizer_step % args.log_freq
-
-                if create_cpu_buffers:
-                    create_cpu_buffers_for_checkpointing(args, epoch, dynamic_optimizer_step, model, optimizer, grad_scaler, most_recent_ckpts_paths, buffer_states, model_state_keys, optimizer_state_keys)
-                    create_cpu_buffers = False
-                
-                checkpoint_only_to_cpu_step(args, epoch, dynamic_optimizer_step, model, optimizer, grad_scaler, most_recent_ckpts_paths, buffer_states, model_state_keys, optimizer_state_keys)
 
                 # Log Final Step (MAYBE)
                 # Since the stats are asynchronously pushed from the GPU to CPU, they are not always reliable
