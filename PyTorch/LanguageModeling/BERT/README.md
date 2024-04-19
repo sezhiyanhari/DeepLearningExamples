@@ -32,3 +32,11 @@ This will stop the current training and start the CPU checkpoints to be persiste
 ## Resume Training from Checkpoint on Disk
 
 To resume training from the latest checkpoint on disk (located in the `results/checkpoints/memory` folder), set `resume_from_in_mem_checkpoints` in `run_pretraining.py` to `True`. This will invoke the program to pull the load the latest checkpoint in all trainers and resume training. Also make sure to delete the `error.txt` file created in the prior step or the trainers will notice this file and immediately try to checkpoint to disk
+
+## Miscellaneous: GPU-to-CPU bandwidth profiling scripts
+
+The script `run_numa_cuda.sh` is used to measure the aggregate GPU-to-CPU memory bandwidth in an 8-GPU setting. Feel free to adjust it to however many GPUs you have in your machine. It also uses `numactl` to assign a specific process to a specific NUMA node. This is important for performance. You can identify GPU-NUMA mappings through the command: `nvidia-smi topo -m`
+
+To use these scripts:
+1. Compile `numa_cuda.cu` => `nvcc numa_cuda.cu -o numa_cuda`
+2. Run script => `bash run_numa_cuda.sh`
